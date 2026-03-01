@@ -86,7 +86,19 @@ async function initDB() {
             console.log('✅ تم إضافة الخدمات الافتراضية');
         }
 
-        console.log('✅ قاعدة البيانات جاهزة');
+        
+        // جدول التتبع
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS tracking (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                property_no VARCHAR(100) NOT NULL UNIQUE,
+                steps       TEXT NOT NULL DEFAULT '[]',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        `);
+
+console.log('✅ قاعدة البيانات جاهزة');
     } catch (err) {
         console.error('❌ خطأ في تهيئة قاعدة البيانات:', err.message);
     }
@@ -324,6 +336,103 @@ app.get('/stats', async (req, res) => {
 // ==========================================
 // تشغيل السيرفر
 // ==========================================
+
+// ==========================================
+// 🗺️ التتبع
+// ==========================================
+
+// GET /tracking/:property_no — جلب حالة معاملة
+app.get('/tracking/:property_no', async (req, res) => {
+    const { property_no } = req.params;
+    try {
+        const [rows] = await pool.execute('SELECT * FROM tracking WHERE property_no = ?', [property_no]);
+        if (rows.length === 0) {
+            return res.json({ found: false });
+        }
+        const row = rows[0];
+        res.json({ found: true, property_no: row.property_no, steps: JSON.parse(row.steps) });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'خطأ في جلب بيانات التتبع' });
+    }
+});
+
+// POST /tracking — إنشاء معاملة جديدة أو تحديثها
+// body: { property_no, steps }
+app.post('/tracking', async (req, res) => {
+    const { property_no, steps } = req.body;
+    if (!property_no) return res.json({ success: false, message: 'رقم العقار مطلوب' });
+    try {
+        const stepsJson = JSON.stringify(steps || []);
+        await pool.execute(
+            `INSERT INTO tracking (property_no, steps) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE steps = ?, updated_at = NOW()`,
+            [property_no, stepsJson, stepsJson]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'خطأ في حفظ بيانات التتبع' });
+    }
+});
+
+// PUT /tracking/:property_no/step — تحديث خطوة واحدة
+// body: { stepId, status }  status: 'completed' | 'in-progress' | 'pending'
+app.put('/tracking/:property_no/step', async (req, res) => {
+    const { property_no } = req.params;
+    const { stepId, status } = req.body;
+    try {
+        const [rows] = await pool.execute('SELECT steps FROM tracking WHERE property_no = ?', [property_no]);
+        
+        let steps = [];
+        if (rows.length > 0) {
+            steps = JSON.parse(rows[0].steps);
+        } else {
+            // إنشاء سجل جديد بالخطوات الافتراضية
+            steps = Array.from({length: 16}, (_, i) => ({ id: i+1, status: 'pending', date: null }));
+        }
+
+        // تحديث الخطوة المطلوبة
+        const idx = steps.findIndex(s => s.id === stepId);
+        if (idx !== -1) {
+            steps[idx].status = status;
+            steps[idx].date = status === 'completed' ? new Date().toISOString().split('T')[0] : null;
+        } else {
+            steps.push({ id: stepId, status, date: status === 'completed' ? new Date().toISOString().split('T')[0] : null });
+        }
+
+        // الخطوة التي بعدها تصبح in-progress تلقائياً
+        if (status === 'completed') {
+            const nextIdx = steps.findIndex(s => s.id === stepId + 1);
+            if (nextIdx !== -1 && steps[nextIdx].status === 'pending') {
+                steps[nextIdx].status = 'in-progress';
+            }
+        }
+
+        const stepsJson = JSON.stringify(steps);
+        await pool.execute(
+            `INSERT INTO tracking (property_no, steps) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE steps = ?, updated_at = NOW()`,
+            [property_no, stepsJson, stepsJson]
+        );
+
+        res.json({ success: true, steps });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'خطأ في تحديث الخطوة' });
+    }
+});
+
+// GET /tracking — جلب كل المعاملات المتتبعة
+app.get('/tracking', async (req, res) => {
+    try {
+        const [rows] = await pool.execute('SELECT property_no, steps, updated_at FROM tracking ORDER BY updated_at DESC');
+        res.json(rows.map(r => ({ ...r, steps: JSON.parse(r.steps) })));
+    } catch (err) {
+        res.status(500).json({ error: 'خطأ' });
+    }
+});
+
 initDB().then(() => {
     app.listen(PORT, () => {
         console.log(`🚀 السيرفر يعمل على البورت ${PORT}`);
