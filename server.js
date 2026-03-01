@@ -433,6 +433,19 @@ app.get('/tracking', async (req, res) => {
     }
 });
 
+
+// DELETE /tracking/:property_no — حذف معاملة
+app.delete('/tracking/:property_no', async (req, res) => {
+    const { property_no } = req.params;
+    try {
+        await pool.execute('DELETE FROM tracking WHERE property_no = ?', [property_no]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'خطأ في الحذف' });
+    }
+});
+
 initDB().then(() => {
     app.listen(PORT, () => {
         console.log(`🚀 السيرفر يعمل على البورت ${PORT}`);
