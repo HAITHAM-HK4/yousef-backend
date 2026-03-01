@@ -92,7 +92,7 @@ async function initDB() {
             CREATE TABLE IF NOT EXISTS tracking (
                 id          INT AUTO_INCREMENT PRIMARY KEY,
                 property_no VARCHAR(100) NOT NULL UNIQUE,
-                steps       TEXT NOT NULL DEFAULT '[]',
+                steps       LONGTEXT NOT NULL,
                 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             )
